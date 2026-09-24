@@ -1,0 +1,13 @@
+{
+  "entity": {
+    "sensor": {
+      "current_bill_usage": { "default": "mdi:fire" },
+      "forecasted_bill_usage": { "default": "mdi:fire" },
+      "typical_bill_usage": { "default": "mdi:fire" },
+      "latest_day_usage": { "default": "mdi:fire" },
+      "last_bill_usage": { "default": "mdi:fire" },
+      "bill_period_start": { "default": "mdi:calendar-start" },
+      "bill_period_end": { "default": "mdi:calendar-end" }
+    }
+  }
+}
