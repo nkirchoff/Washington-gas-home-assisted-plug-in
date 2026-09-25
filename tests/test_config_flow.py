@@ -13,7 +13,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.washington_gas.const import (
     CONF_ENERGY_UNIT,
-    CONF_LOGIN_METHOD,
     CONF_PORTAL_SUBDOMAIN,
     CONF_PORTAL_UTILITY_CODE,
     DOMAIN,
@@ -35,6 +34,7 @@ async def test_user_flow(hass: HomeAssistant, mock_session: FakeOpower) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {}
+    assert result["description_placeholders"] == {"create_account_url": "https://wgl.opower.com/ei/x/create-account"}
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -48,44 +48,8 @@ async def test_user_flow(hass: HomeAssistant, mock_session: FakeOpower) -> None:
         CONF_ENERGY_UNIT: ENERGY_UNIT_KWH,
         CONF_PORTAL_SUBDOMAIN: "wgl",
         CONF_PORTAL_UTILITY_CODE: "wgl",
-        CONF_LOGIN_METHOD: "opower",
     }
     assert result["result"].unique_id == USERNAME
-
-
-async def test_user_flow_through_my_washington_gas(hass: HomeAssistant, mock_session: FakeOpower) -> None:
-    """A My Washington Gas login that doesn't work on Opower directly still sets up."""
-    mock_session.portal_mode = "saml"
-    mock_session.direct_login_works = False
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_USERNAME: USERNAME, CONF_PASSWORD: PASSWORD, CONF_ENERGY_UNIT: "ccf"}
-    )
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_LOGIN_METHOD] == "washingtongas"
-    assert result["data"][CONF_PORTAL_SUBDOMAIN] == "wgl"
-
-
-@pytest.mark.parametrize(
-    ("mode", "error"),
-    [
-        ("mfa", "mfa_required"),
-        ("captcha", "captcha_required"),
-        ("no_handoff", "handoff_failed"),
-        ("bad_assertion", "handoff_failed"),
-        ("js_only", "cannot_connect"),
-    ],
-)
-async def test_my_washington_gas_errors(hass: HomeAssistant, mock_session: FakeOpower, mode: str, error: str) -> None:
-    """Each way the My Washington Gas path can stop gets its own message."""
-    mock_session.portal_mode = mode
-    mock_session.direct_login_works = False
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_USERNAME: USERNAME, CONF_PASSWORD: PASSWORD, CONF_ENERGY_UNIT: "ccf"}
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": error}
 
 
 @pytest.mark.parametrize(

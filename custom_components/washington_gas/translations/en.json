@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect Washington Gas",
-        "description": "Sign in with your My Washington Gas email and password, the same ones you use at my.washingtongas.com. If you made a separate account on the Home Energy Analysis site (wgl.opower.com), that login works too.",
+        "description": "Sign in with your login for wgl.opower.com, Washington Gas's Home Energy Analysis site. Your My Washington Gas login (my.washingtongas.com) won't work here: that site's sign-in uses a CAPTCHA, which the integration won't try to get around. If you don't have a wgl.opower.com login yet, [create one]({create_account_url}) with the account number from your bill, then enter it below.",
         "data": {
           "username": "Email or username",
           "password": "Password",
@@ -15,18 +15,15 @@
       },
       "reauth_confirm": {
         "title": "Washington Gas password",
-        "description": "The saved password for {username} stopped working. Enter the one you use at my.washingtongas.com now.",
+        "description": "The saved password for {username} stopped working. Enter the one you use at wgl.opower.com now.",
         "data": {
           "password": "Password"
         }
       }
     },
     "error": {
-      "invalid_auth": "Washington Gas didn't accept that email and password. Check that they work at my.washingtongas.com.",
-      "mfa_required": "My Washington Gas asked for a verification code. The integration can't enter codes, so it can't sign in to this account automatically.",
-      "captcha_required": "My Washington Gas is showing a CAPTCHA on sign-in. The integration won't try to get around it, so it can't sign in right now.",
-      "handoff_failed": "Signed in to My Washington Gas, but couldn't get from there to the usage site. Run scripts/check_connection.py from the integration's GitHub page and share its output in an issue.",
-      "cannot_connect": "Couldn't sign in to Washington Gas. Try again in a few minutes. If it keeps happening, run scripts/check_connection.py from the integration's GitHub page to see which step fails.",
+      "invalid_auth": "wgl.opower.com didn't accept that email and password. Check that they work there. Your My Washington Gas login is separate and won't work here.",
+      "cannot_connect": "Couldn't sign in to wgl.opower.com. Try again in a few minutes. If it keeps happening, run scripts/check_connection.py from the integration's GitHub page to see which step fails.",
       "no_accounts": "That login worked, but no gas accounts are linked to it yet.",
       "unknown": "Something unexpected went wrong. Check the Home Assistant logs."
     },

@@ -8,14 +8,17 @@ from itertools import pairwise
 import pytest
 
 from custom_components.washington_gas.api import (
+    STEP_ACCOUNTS,
+    STEP_SIGN_IN,
     CannotConnect,
     InvalidAuth,
+    NoAccounts,
     Portal,
     WashingtonGasClient,
 )
 from custom_components.washington_gas.coordinator import _merge_reads
 
-from .fake_opower import ACCOUNT_NUMBER, PASSWORD, TZ, USERNAME, FakeOpower, build_daily
+from .fake_opower import ACCOUNT_NUMBER, PASSWORD, SESSION_TOKEN, TZ, USERNAME, FakeOpower, build_daily
 
 
 def _client(site: FakeOpower, password: str = PASSWORD, portal: Portal | None = None) -> WashingtonGasClient:
@@ -34,6 +37,25 @@ async def test_login_finds_wgl_portal() -> None:
     assert accounts[0].read_resolution == "DAY"
     assert accounts[0].supports("day")
     assert not accounts[0].supports("hour")
+    assert [(a.step, a.ok, a.host, a.status) for a in client.login_report] == [
+        (STEP_SIGN_IN, True, "wgl.opower.com", 204),
+        (STEP_ACCOUNTS, True, "wgl.opower.com", 200),
+    ]
+    # The password only goes to Washington Gas's Opower sign-in, never to my.washingtongas.com.
+    assert site.password_sent_to == ["wgl.opower.com"]
+    assert all("washingtongas.com" not in url for _, url, _ in site.calls)
+
+
+async def test_login_with_session_token() -> None:
+    """A token returned by sign in is sent with every request after it."""
+    site = FakeOpower.with_history(token_login=True)
+    client = _client(site)
+    await client.async_login()
+    accounts = await client.async_get_accounts()
+    today = datetime.now(TZ).date()
+    reads = await client.async_get_cost_reads(accounts[0], "day", today - timedelta(days=5), today)
+    assert reads
+    assert SESSION_TOKEN not in str(client.login_report)
 
 
 async def test_login_falls_back_to_second_portal() -> None:
@@ -50,6 +72,10 @@ async def test_bad_password() -> None:
     with pytest.raises(InvalidAuth):
         await client.async_login()
     assert client.portal is None
+    assert [(a.step, a.ok, a.host, a.status) for a in client.login_report] == [
+        (STEP_SIGN_IN, False, "wgl.opower.com", 401),
+        (STEP_SIGN_IN, False, "wglm.opower.com", 404),
+    ]
 
 
 async def test_bad_password_known_portal() -> None:
@@ -65,6 +91,16 @@ async def test_server_errors_are_not_auth_errors(status: int) -> None:
     client = _client(FakeOpower.with_history(login_status=status))
     with pytest.raises(CannotConnect):
         await client.async_login()
+
+
+async def test_no_accounts() -> None:
+    """A login with no accounts behind it raises NoAccounts."""
+    site = FakeOpower.with_history()
+    site._customers = lambda: {"customers": []}  # type: ignore[method-assign]
+    client = _client(site)
+    with pytest.raises(NoAccounts):
+        await client.async_login()
+    assert client.portal is None
 
 
 async def test_no_portal_exists() -> None:

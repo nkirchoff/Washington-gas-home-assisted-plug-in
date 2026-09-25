@@ -43,7 +43,6 @@ from .api import (
 )
 from .const import (
     CONF_ENERGY_UNIT,
-    CONF_LOGIN_METHOD,
     CONF_PORTAL_SUBDOMAIN,
     CONF_PORTAL_UTILITY_CODE,
     DEFAULT_ENERGY_UNIT,
@@ -131,7 +130,6 @@ class WashingtonGasCoordinator(DataUpdateCoordinator[dict[str, AccountData]]):
             config_entry.data[CONF_USERNAME],
             config_entry.data[CONF_PASSWORD],
             portal_from_data(config_entry.data),
-            config_entry.data.get(CONF_LOGIN_METHOD),
         )
         self.energy_unit: str = config_entry.data.get(CONF_ENERGY_UNIT, DEFAULT_ENERGY_UNIT)
         # Remember each account's unit so sensors keep it if a forecast goes missing.
@@ -191,19 +189,16 @@ class WashingtonGasCoordinator(DataUpdateCoordinator[dict[str, AccountData]]):
 
     @callback
     def _async_remember_portal(self) -> None:
-        """Save which sign-in and Opower site worked so later logins go straight to them."""
+        """Save which Opower site worked so later logins go straight to it."""
         portal = self.client.portal
-        method = self.client.login_method
-        data = self.config_entry.data
-        if portal is None or (portal == portal_from_data(data) and method == data.get(CONF_LOGIN_METHOD)):
+        if portal is None or portal == portal_from_data(self.config_entry.data):
             return
         self.hass.config_entries.async_update_entry(
             self.config_entry,
             data={
-                **data,
+                **self.config_entry.data,
                 CONF_PORTAL_SUBDOMAIN: portal.subdomain,
                 CONF_PORTAL_UTILITY_CODE: portal.utility_code,
-                CONF_LOGIN_METHOD: method,
             },
         )
 

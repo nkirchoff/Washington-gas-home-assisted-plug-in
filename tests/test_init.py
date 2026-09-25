@@ -16,7 +16,6 @@ from pytest_homeassistant_custom_component.components.recorder.common import asy
 
 from custom_components.washington_gas.const import (
     CONF_ENERGY_UNIT,
-    CONF_LOGIN_METHOD,
     CONF_PORTAL_SUBDOMAIN,
     CONF_PORTAL_UTILITY_CODE,
     ENERGY_UNIT_KWH,
@@ -211,50 +210,6 @@ async def test_portal_is_remembered(
     assert config_entry.data[CONF_PORTAL_UTILITY_CODE] == "wglm"
 
 
-async def test_setup_through_my_washington_gas(
-    recorder_mock: Recorder, hass: HomeAssistant, mock_session: FakeOpower, config_entry: MockConfigEntry
-) -> None:
-    """An entry that signs in through My Washington Gas loads, keeps using that path, and imports history."""
-    mock_session.portal_mode = "saml"
-    mock_session.direct_login_works = False
-    config_entry.add_to_hass(hass)
-    hass.config_entries.async_update_entry(config_entry, data={**config_entry.data, CONF_LOGIN_METHOD: "washingtongas"})
-    await _setup(hass, config_entry)
-    assert config_entry.state is ConfigEntryState.LOADED
-    assert hass.states.get(f"{PREFIX}_current_bill_gas_usage").state == "48.0"
-    assert (await _last(hass, USAGE_ID))["sum"] > 0
-    assert not any("account/signin" in url for _, url, _ in mock_session.calls)
-
-    result = await async_get_config_entry_diagnostics(hass, config_entry)
-    assert result["login_method"] == "washingtongas"
-    assert [step["step"] for step in result["login_report"]] == ["washingtongas_login", "handoff", "opower_api"]
-    assert "correct-horse" not in str(result)
-
-
-async def test_old_entry_learns_login_method(
-    recorder_mock: Recorder, hass: HomeAssistant, mock_session: FakeOpower, config_entry: MockConfigEntry
-) -> None:
-    """An entry from before the My Washington Gas path saves whichever login works."""
-    mock_session.portal_mode = "saml"
-    mock_session.direct_login_works = False
-    await _setup(hass, config_entry)
-    assert config_entry.data[CONF_LOGIN_METHOD] == "washingtongas"
-
-
-async def test_mfa_after_setup_retries_without_reauth(
-    recorder_mock: Recorder, hass: HomeAssistant, mock_session: FakeOpower, config_entry: MockConfigEntry
-) -> None:
-    """A verification code prompt isn't a wrong password, so it doesn't ask for a new one."""
-    mock_session.portal_mode = "mfa"
-    mock_session.direct_login_works = False
-    config_entry.add_to_hass(hass)
-    hass.config_entries.async_update_entry(config_entry, data={**config_entry.data, CONF_LOGIN_METHOD: "washingtongas"})
-    await hass.config_entries.async_setup(config_entry.entry_id)
-    await hass.async_block_till_done()
-    assert config_entry.state is ConfigEntryState.SETUP_RETRY
-    assert not any(flow["context"]["source"] == SOURCE_REAUTH for flow in hass.config_entries.flow.async_progress())
-
-
 async def test_bad_password_starts_reauth(
     recorder_mock: Recorder, hass: HomeAssistant, mock_session: FakeOpower, config_entry: MockConfigEntry
 ) -> None:
@@ -290,4 +245,5 @@ async def test_diagnostics_hide_secrets(
     assert ACCOUNT_NUMBER not in text
     assert "user@example.com" not in text
     assert result["portal"] == {"subdomain": "wgl", "utility_code": "wgl"}
+    assert [step["step"] for step in result["login_report"]] == ["sign_in"]
     assert result["accounts"][0]["unit"] == "THERM"

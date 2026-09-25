@@ -7,13 +7,15 @@ it inside the Home Assistant container):
     pip install aiohttp
     python3 scripts/check_connection.py
 
-It asks for your email and password and never saves them. It reports each
-sign-in step (My Washington Gas sign-in, hand-off to Opower, Opower API) with
-the host and HTTP status where it stopped. Passwords, cookies, tokens and
-query strings are never printed, and account numbers are partly hidden, so
-the output is safe to paste into a GitHub issue.
+Use your wgl.opower.com login. A My Washington Gas (my.washingtongas.com)
+login won't work there. If you don't have a wgl.opower.com login, create one
+at https://wgl.opower.com/ei/x/create-account first.
 
-    --trace   also list every request (method, host, path, status) when it works
+It asks for your email and password and never saves them. It reports each
+sign-in step with the host and HTTP status where it stopped. Passwords,
+cookies and tokens are never printed, and account numbers are partly hidden,
+so the output is safe to paste into a GitHub issue.
+
     --debug   Python debug logging
 """
 
@@ -23,22 +25,21 @@ import argparse
 import asyncio
 from datetime import datetime, timedelta
 import getpass
-import importlib
+import importlib.util
 import logging
 from pathlib import Path
 import sys
-import types
 from urllib.parse import urlsplit
 
 import aiohttp
 
-# Load the integration's client as a package, without its Home Assistant parts.
-_PACKAGE_DIR = Path(__file__).resolve().parent.parent / "custom_components" / "washington_gas"
-_package = types.ModuleType("washington_gas_client")
-_package.__path__ = [str(_PACKAGE_DIR)]
-sys.modules["washington_gas_client"] = _package
-api = importlib.import_module("washington_gas_client.api")
-errors = importlib.import_module("washington_gas_client.errors")
+# Load api.py by path so Home Assistant isn't needed.
+_API_PATH = Path(__file__).resolve().parent.parent / "custom_components" / "washington_gas" / "api.py"
+_spec = importlib.util.spec_from_file_location("washington_gas_api", _API_PATH)
+assert _spec and _spec.loader
+api = importlib.util.module_from_spec(_spec)
+sys.modules["washington_gas_api"] = api
+_spec.loader.exec_module(api)
 
 
 def _mask(value: str) -> str:
@@ -61,36 +62,19 @@ def _print_steps(client: api.WashingtonGasClient) -> None:
             where.append(f"HTTP {attempt.status}")
         suffix = f" [{', '.join(where)}]" if where else ""
         mark = "OK    " if attempt.ok else "FAILED"
-        print(f"  {mark} {errors.STEP_NAMES.get(attempt.step, attempt.step)}: {attempt.detail}{suffix}")
-
-
-def _print_trace(client: api.WashingtonGasClient) -> None:
-    if not client.trace:
-        return
-    print("\nRequests made (hosts and paths only):")
-    for line in client.trace:
-        print(f"  {line}")
+        print(f"  {mark} {api.STEP_NAMES.get(attempt.step, attempt.step)}: {attempt.detail}{suffix}")
 
 
 async def _login(client: api.WashingtonGasClient) -> bool:
     try:
         await client.async_login()
-    except api.MfaRequired as err:
-        _print_steps(client)
-        print(f"\nStopped: {err}.")
-        print(
-            "The integration can't sign in to an account that asks for a code at sign-in. "
-            "It doesn't try to get around this."
-        )
-        return False
-    except api.CaptchaRequired as err:
-        _print_steps(client)
-        print(f"\nStopped: {err}.")
-        print("The integration doesn't try to get around CAPTCHAs.")
-        return False
     except api.InvalidAuth:
         _print_steps(client)
-        print("\nThe email and password were rejected. Check they work at https://my.washingtongas.com")
+        print("\nThe email and password were rejected. Check they work at https://wgl.opower.com")
+        print(
+            "A My Washington Gas login won't work there. "
+            f"If you don't have a wgl.opower.com login, create one at {api.CREATE_ACCOUNT_URL}"
+        )
         return False
     except api.NoAccounts:
         _print_steps(client)
@@ -98,23 +82,18 @@ async def _login(client: api.WashingtonGasClient) -> bool:
         return False
     except api.CannotConnect as err:
         _print_steps(client)
-        step = getattr(err, "step", None)
-        where = f" at {errors.STEP_NAMES.get(step, step)}" if step else ""
-        print(f"\nStopped{where}: {err}")
-        _print_trace(client)
+        print(f"\nStopped: {err}")
         print("\nIf you open an issue, paste everything above. It has no passwords, cookies or tokens.")
         return False
     _print_steps(client)
     return True
 
 
-async def _report(session: aiohttp.ClientSession, username: str, password: str, trace: bool) -> int:
+async def _report(session: aiohttp.ClientSession, username: str, password: str) -> int:
     client = api.WashingtonGasClient(session, username, password)
     if not await _login(client):
         return 1
-    if trace:
-        _print_trace(client)
-    print(f"\nUsing {client.portal.subdomain}.opower.com (signed in via {client.login_method})")
+    print(f"\nUsing {client.portal.subdomain}.opower.com")
 
     try:
         accounts = await client.async_get_accounts()
@@ -149,25 +128,24 @@ async def _report(session: aiohttp.ClientSession, username: str, password: str, 
                 )
     except api.ApiError as err:
         status = f"HTTP {err.status}" if err.status is not None else "no response"
-        print(f"\nFAILED Opower API: signed in, but reading data failed [{urlsplit(err.url).hostname}, {status}]")
+        print(f"\nFAILED Reading data: signed in, but a data request failed [{urlsplit(err.url).hostname}, {status}]")
         return 1
     return 0
 
 
-async def _run(username: str, password: str, trace: bool) -> int:
+async def _run(username: str, password: str) -> int:
     async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(quote_cookie=False)) as session:
-        return await _report(session, username, password, trace)
+        return await _report(session, username, password)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--trace", action="store_true", help="list every request even when it works")
     parser.add_argument("--debug", action="store_true", help="Python debug logging")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING)
-    username = input("My Washington Gas email or username: ").strip()
+    username = input("wgl.opower.com email or username: ").strip()
     password = getpass.getpass("Password: ")
-    return asyncio.run(_run(username, password, args.trace))
+    return asyncio.run(_run(username, password))
 
 
 if __name__ == "__main__":

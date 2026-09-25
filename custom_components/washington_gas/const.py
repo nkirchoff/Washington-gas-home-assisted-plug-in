@@ -5,8 +5,6 @@ DOMAIN = "washington_gas"
 CONF_PORTAL_SUBDOMAIN = "portal_subdomain"
 CONF_PORTAL_UTILITY_CODE = "portal_utility_code"
 CONF_ENERGY_UNIT = "energy_unit"
-# Which sign-in worked: "washingtongas" (My Washington Gas) or "opower" (direct).
-CONF_LOGIN_METHOD = "login_method"
 
 # How gas usage is written to the Energy dashboard statistics.
 # Home Assistant has no therm unit. "ccf" records the therm numbers from the

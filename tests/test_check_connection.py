@@ -5,10 +5,12 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
-from .fake_opower import EMBEDDED_TOKEN, PASSWORD, SAML_ASSERTION, SSO_CODE, USERNAME, FakeOpower
+from .fake_opower import ACCOUNT_NUMBER, PASSWORD, SESSION_TOKEN, USERNAME, FakeOpower
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_connection.py"
 
@@ -22,55 +24,53 @@ def script() -> ModuleType:
     return module
 
 
-async def _run(script: ModuleType, mode: str | None, password: str = PASSWORD, trace: bool = False) -> tuple[int, str]:
-    site = FakeOpower.with_history(portal_mode=mode, direct_login_works=False)
-    return await script._report(site, USERNAME, password, trace), ""
+async def _run(script: ModuleType, password: str = PASSWORD, **site_kwargs: Any) -> int:
+    site = FakeOpower.with_history(**site_kwargs)
+    return await script._report(site, USERNAME, password)
 
 
 def _check_no_secrets(output: str) -> None:
-    for secret in (PASSWORD, SAML_ASSERTION, SSO_CODE, EMBEDDED_TOKEN, "target=hea", "1234567890"):
+    for secret in (PASSWORD, SESSION_TOKEN, ACCOUNT_NUMBER):
         assert secret not in output
 
 
 async def test_success(script: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
-    code, _ = await _run(script, "saml", trace=True)
+    code = await _run(script)
     out = capsys.readouterr().out
     assert code == 0
-    assert "OK     My Washington Gas sign-in: Signed in [my.washingtongas.com, HTTP 200]" in out
-    assert "OK     Hand-off to Opower: Reached wgl.opower.com [wgl.opower.com, HTTP 200]" in out
-    assert "OK     Opower API" in out
-    assert "signed in via washingtongas" in out
-    assert "POST wgl.opower.com/ei/sso/saml/acs -> 302" in out
+    assert "OK     Sign-in: Signed in [wgl.opower.com, HTTP 204]" in out
+    assert "OK     Reading accounts: Found 1 customer record(s) [wgl.opower.com, HTTP 200]" in out
+    assert "Using wgl.opower.com" in out
     assert "******7890" in out
-    _check_no_secrets(out)
-
-
-@pytest.mark.parametrize(
-    ("mode", "expected"),
-    [
-        ("no_handoff", ["FAILED Hand-off to Opower", "[my.washingtongas.com, HTTP 200]", "Requests made"]),
-        ("bad_assertion", ["FAILED Opower API", "[wgl.opower.com, HTTP 401]"]),
-        ("js_only", ["FAILED My Washington Gas sign-in", "JavaScript", "login.bundle.js"]),
-        ("mfa", ["Stopped", "verification code", "doesn't try to get around"]),
-        ("captcha", ["Stopped", "CAPTCHA", "doesn't try to get around"]),
-        (None, ["FAILED Direct Opower sign-in", "[wgl.opower.com, HTTP 401]", "rejected"]),
-    ],
-)
-async def test_failures_name_the_step(
-    script: ModuleType, capsys: pytest.CaptureFixture[str], mode: str | None, expected: list[str]
-) -> None:
-    code, _ = await _run(script, mode)
-    out = capsys.readouterr().out
-    assert code == 1
-    for text in expected:
-        assert text in out
+    assert "This bill (2026-01-05 to 2026-02-04): 48 therms so far, $91.20" in out
     _check_no_secrets(out)
 
 
 async def test_wrong_password(script: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
-    code, _ = await _run(script, "saml", password="wrong")
+    code = await _run(script, password="wrong")
     out = capsys.readouterr().out
     assert code == 1
-    assert "FAILED My Washington Gas sign-in: My Washington Gas rejected the username or password" in out
-    assert "my.washingtongas.com" in out
-    assert "wrong" not in out.replace("rejected", "")
+    assert "FAILED Sign-in: Opower rejected the username or password [wgl.opower.com, HTTP 401]" in out
+    assert "FAILED Sign-in: No sign-in on this Opower site [wglm.opower.com, HTTP 404]" in out
+    assert "A My Washington Gas login won't work there" in out
+    assert "https://wgl.opower.com/ei/x/create-account" in out
+    assert "wrong" not in out
+
+
+async def test_outage(script: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+    code = await _run(script, login_status=503)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAILED Sign-in: Sign-in failed [wgl.opower.com, HTTP 503]" in out
+    assert "Stopped:" in out
+    assert "paste everything above" in out
+    _check_no_secrets(out)
+
+
+async def test_no_accounts(script: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(FakeOpower, "_customers", return_value={"customers": []}):
+        code = await _run(script)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAILED Reading accounts: Signed in, but no accounts are linked [wgl.opower.com, HTTP 200]" in out
+    assert "no gas accounts are linked" in out

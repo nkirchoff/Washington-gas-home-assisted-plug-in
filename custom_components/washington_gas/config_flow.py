@@ -19,18 +19,9 @@ from homeassistant.helpers.selector import (
 )
 import voluptuous as vol
 
-from .api import (
-    CannotConnect,
-    CaptchaRequired,
-    InvalidAuth,
-    LoginStepError,
-    MfaRequired,
-    NoAccounts,
-    WashingtonGasClient,
-)
+from .api import CREATE_ACCOUNT_URL, CannotConnect, InvalidAuth, NoAccounts, WashingtonGasClient
 from .const import (
     CONF_ENERGY_UNIT,
-    CONF_LOGIN_METHOD,
     CONF_PORTAL_SUBDOMAIN,
     CONF_PORTAL_UTILITY_CODE,
     DEFAULT_ENERGY_UNIT,
@@ -39,7 +30,6 @@ from .const import (
     ENERGY_UNIT_KWH,
 )
 from .coordinator import create_session
-from .errors import STEP_HANDOFF, STEP_OPOWER_API
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,7 +53,7 @@ STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR
 
 
 async def async_validate_login(hass: HomeAssistant, username: str, password: str) -> dict[str, Any]:
-    """Log in, check there is at least one account, and return what to remember about the login."""
+    """Log in, check there is at least one account, and return which Opower site worked."""
     client = WashingtonGasClient(create_session(hass), username, password)
     await client.async_login()
     if not await client.async_get_accounts() or client.portal is None:
@@ -71,7 +61,6 @@ async def async_validate_login(hass: HomeAssistant, username: str, password: str
     return {
         CONF_PORTAL_SUBDOMAIN: client.portal.subdomain,
         CONF_PORTAL_UTILITY_CODE: client.portal.utility_code,
-        CONF_LOGIN_METHOD: client.login_method,
     }
 
 
@@ -86,12 +75,6 @@ class WashingtonGasConfigFlow(ConfigFlow, domain=DOMAIN):
             return await async_validate_login(self.hass, username, password)
         except InvalidAuth:
             errors["base"] = "invalid_auth"
-        except MfaRequired:
-            errors["base"] = "mfa_required"
-        except CaptchaRequired:
-            errors["base"] = "captcha_required"
-        except LoginStepError as err:
-            errors["base"] = "handoff_failed" if err.step in (STEP_HANDOFF, STEP_OPOWER_API) else "cannot_connect"
         except CannotConnect:
             errors["base"] = "cannot_connect"
         except NoAccounts:
@@ -124,6 +107,7 @@ class WashingtonGasConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(STEP_USER_SCHEMA, user_input),
             errors=errors,
+            description_placeholders={"create_account_url": CREATE_ACCOUNT_URL},
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:

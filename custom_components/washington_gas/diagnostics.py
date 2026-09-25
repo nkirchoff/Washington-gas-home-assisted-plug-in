@@ -21,10 +21,8 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Washing
     return {
         "entry": async_redact_data(dict(entry.data), TO_REDACT),
         "portal": asdict(client.portal) if client.portal else None,
-        "login_method": client.login_method,
-        # Steps and requests from the last login: hosts, paths and HTTP statuses only.
+        # Steps from the last login: hosts and HTTP statuses only.
         "login_report": [asdict(attempt) for attempt in client.login_report],
-        "login_trace": list(client.trace),
         "last_update_success": coordinator.last_update_success,
         "accounts": [async_redact_data(asdict(data), TO_REDACT) for data in (coordinator.data or {}).values()],
     }
