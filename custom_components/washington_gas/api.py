@@ -1,8 +1,14 @@
-"""Client for the Washington Gas usage portal, which is hosted by Opower.
+"""Client for Washington Gas usage data, which is hosted by Opower.
 
 Washington Gas publishes meter reads, costs and bill forecasts through an
 Opower site at wgl.opower.com (the "Home Energy Analysis" pages). This module
-talks to the same JSON API those pages use.
+signs in and talks to the same JSON API those pages use.
+
+There are two ways in:
+- Through my.washingtongas.com (My Washington Gas), following its hand-off
+  into Opower the way a browser does. This is the login most customers have.
+  See portal_login.py.
+- Directly on wgl.opower.com, for people who made a separate account there.
 
 It only depends on aiohttp and the standard library on purpose, so it can
 also be run outside Home Assistant (see scripts/check_connection.py).
@@ -22,6 +28,35 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import aiohttp
+
+from .errors import (
+    STEP_HANDOFF,
+    STEP_OPOWER_API,
+    STEP_OPOWER_DIRECT,
+    STEP_PORTAL_LOGIN,
+    ApiError,
+    CannotConnect,
+    CaptchaRequired,
+    InvalidAuth,
+    LoginStepError,
+    MfaRequired,
+    NoAccounts,
+    PortalUnavailable,
+    WashingtonGasError,
+)
+from .portal_login import PortalLogin
+
+__all__ = [
+    "ApiError",
+    "CannotConnect",
+    "CaptchaRequired",
+    "InvalidAuth",
+    "LoginStepError",
+    "MfaRequired",
+    "NoAccounts",
+    "PortalUnavailable",
+    "WashingtonGasError",
+]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,30 +107,20 @@ query GetBillForecast {
 """
 
 
-class WashingtonGasError(Exception):
-    """Base error for this client."""
+# Which sign-in worked, remembered so later logins go straight to it.
+LOGIN_WASHINGTONGAS = "washingtongas"
+LOGIN_OPOWER = "opower"
 
 
-class InvalidAuth(WashingtonGasError):
-    """The username or password was rejected."""
+@dataclass(frozen=True)
+class LoginAttempt:
+    """One sign-in step and how it went. Never holds passwords, cookies or tokens."""
 
-
-class CannotConnect(WashingtonGasError):
-    """The portal could not be reached or returned an unexpected answer."""
-
-
-class NoAccounts(WashingtonGasError):
-    """The login worked but has no gas accounts linked to it."""
-
-
-class ApiError(WashingtonGasError):
-    """A data request failed."""
-
-    def __init__(self, message: str, url: str, status: int | None = None) -> None:
-        """Initialize the error."""
-        super().__init__(f"{message} ({url})")
-        self.url = url
-        self.status = status
+    step: str
+    ok: bool
+    detail: str
+    host: str | None = None
+    status: int | None = None
 
 
 class _PortalNotFound(WashingtonGasError):
@@ -203,36 +228,149 @@ class WashingtonGasClient:
         username: str,
         password: str,
         portal: Portal | None = None,
+        login_method: str | None = None,
     ) -> None:
         """Initialize.
 
-        The session must have its own cookie jar, since the portal keeps the
-        login in a cookie. Pass portal when it is already known.
+        The session must have its own cookie jar, since the login lives in
+        cookies. Pass portal and login_method when they are already known from
+        an earlier login; otherwise both ways in are tried.
         """
         self._session = session
         self._username = username
         self._password = password
         self._portal = portal
+        self._login_method = login_method
         self._access_token: str | None = None
         self._customers: list[dict[str, Any]] | None = None
+        # What happened at each sign-in step on the last login, and a
+        # redacted record of each request (hosts, paths, statuses only).
+        self.login_report: list[LoginAttempt] = []
+        self.trace: list[str] = []
 
     @property
     def portal(self) -> Portal | None:
         """Return the Opower site in use, once known."""
         return self._portal
 
-    async def async_login(self) -> None:
-        """Sign in, finding the right Opower site if it isn't known yet.
+    @property
+    def login_method(self) -> str | None:
+        """Return which sign-in worked: LOGIN_WASHINGTONGAS or LOGIN_OPOWER."""
+        return self._login_method
 
-        Logins only last a few minutes, so call this before each batch of requests.
+    def _record(self, step: str, ok: bool, detail: str, host: str | None = None, status: int | None = None) -> None:
+        self.login_report.append(LoginAttempt(step, ok, detail, host, status))
+        _LOGGER.debug("Login step %s: %s (%s, HTTP %s)", step, detail, host, status)
 
-        :raises InvalidAuth: the credentials were rejected
-        :raises NoAccounts: the login worked but has no accounts
-        :raises CannotConnect: the portal could not be reached
-        """
+    def _reset_session(self) -> None:
+        """Forget the previous login so a stale session can't get in the way."""
         self._customers = None
         self._access_token = None
-        if self._portal is not None:
+        cookie_jar = getattr(self._session, "cookie_jar", None)
+        if cookie_jar is not None:
+            cookie_jar.clear()
+
+    async def async_login(self) -> None:
+        """Sign in. Logins only last a few minutes, so call this before each batch of requests.
+
+        My Washington Gas is tried first, then a direct Opower login. Once one
+        has worked, only that one is used.
+
+        :raises InvalidAuth: the credentials were rejected
+        :raises MfaRequired: My Washington Gas asked for a verification code
+        :raises CaptchaRequired: My Washington Gas showed a CAPTCHA
+        :raises NoAccounts: the login worked but has no accounts
+        :raises CannotConnect: the site could not be reached, or a step failed
+            (LoginStepError says which one)
+        """
+        self.login_report = []
+        self.trace = []
+        self._reset_session()
+        if self._login_method == LOGIN_WASHINGTONGAS:
+            await self._async_portal_login()
+            return
+        if self._login_method == LOGIN_OPOWER:
+            await self._async_direct_login()
+            return
+
+        try:
+            await self._async_portal_login()
+        except (InvalidAuth, CannotConnect, NoAccounts) as err:
+            portal_error = err
+        else:
+            return
+
+        self._reset_session()
+        try:
+            await self._async_direct_login()
+        except NoAccounts:
+            raise
+        except (InvalidAuth, CannotConnect):
+            # When my.washingtongas.com couldn't be reached at all, the direct
+            # login's answer is the only one there is. Otherwise the My
+            # Washington Gas answer is the one that matters to most people,
+            # and it avoids calling a good password wrong.
+            if isinstance(portal_error, PortalUnavailable):
+                raise
+            raise portal_error from None
+
+    async def _async_portal_login(self) -> None:
+        """Sign in through my.washingtongas.com and follow its hand-off into Opower."""
+        login = PortalLogin(self._session, self._username, self._password, USER_AGENT, REQUEST_TIMEOUT, self.trace)
+        try:
+            handoff = await login.async_login()
+        except InvalidAuth:
+            self._record(
+                STEP_PORTAL_LOGIN, False, "My Washington Gas rejected the username or password", *login.last_at
+            )
+            raise
+        except LoginStepError as err:
+            if err.step == STEP_HANDOFF:
+                self._record(STEP_PORTAL_LOGIN, True, "Signed in", *(login.signed_in_at or (None, None)))
+            self._record(err.step, False, str(err), err.host, err.status)
+            raise
+        self._record(STEP_PORTAL_LOGIN, True, "Signed in", *(login.signed_in_at or (None, None)))
+
+        where = login.handoff_at or (None, None)
+        if handoff.token:
+            self._access_token = handoff.token
+            self._record(STEP_HANDOFF, True, "Found an Opower access token on the usage page", *where)
+        else:
+            self._record(STEP_HANDOFF, True, f"Reached {handoff.subdomain}.opower.com", *where)
+
+        if handoff.subdomain:
+            known = next((p for p in PORTALS if p.subdomain == handoff.subdomain), None)
+            candidates = [known or Portal(handoff.subdomain, handoff.subdomain)]
+        else:
+            candidates = list(PORTALS)
+        failure: LoginStepError | None = None
+        for portal in candidates:
+            self._portal = portal
+            host = f"{portal.subdomain}.opower.com"
+            try:
+                customers = await self._async_fetch_customers()
+            except ApiError as err:
+                failure = LoginStepError(
+                    STEP_OPOWER_API, f"Opower didn't accept the hand-off (HTTP {err.status})", host, err.status
+                )
+                continue
+            if not customers:
+                self._record(STEP_OPOWER_API, False, "Signed in, but no accounts are linked", host, 200)
+                self._portal = None
+                raise NoAccounts("Signed in through My Washington Gas, but Opower lists no accounts")
+            self._customers = customers
+            self._login_method = LOGIN_WASHINGTONGAS
+            self._record(STEP_OPOWER_API, True, f"Found {len(customers)} customer record(s)", host, 200)
+            return
+        self._portal = None
+        self._access_token = None
+        assert failure is not None
+        self._record(STEP_OPOWER_API, False, str(failure), failure.host, failure.status)
+        raise failure
+
+    async def _async_direct_login(self) -> None:
+        """Sign in on Opower directly, finding the right Opower site if it isn't known yet."""
+        if self._portal is not None and self._login_method == LOGIN_OPOWER:
             try:
                 await self._async_sign_in(self._portal)
             except _PortalNotFound as err:
@@ -263,6 +401,7 @@ class WashingtonGasClient:
             else:
                 if customers:
                     self._customers = customers
+                    self._login_method = LOGIN_OPOWER
                     return
                 empty = True
             self._portal = None
@@ -276,6 +415,7 @@ class WashingtonGasClient:
 
     async def _async_sign_in(self, portal: Portal) -> None:
         """Post the credentials to one Opower site."""
+        host = f"{portal.subdomain}.opower.com"
         sign_in_page = f"{portal.base_url}/ei/x/sign-in-wall?source=intercepted"
         url = f"{portal.base_url}/ei/edge/apis/user-account-control-v1/cws/v1/{portal.utility_code}/account/signin"
         headers = {
@@ -303,17 +443,22 @@ class WashingtonGasClient:
                 status = resp.status
                 body = await resp.text()
         except (aiohttp.ClientError, TimeoutError) as err:
+            self._record(STEP_OPOWER_DIRECT, False, f"Could not reach {host}: {type(err).__name__}", host)
             raise CannotConnect(f"Error reaching {portal.base_url}: {err}") from err
 
         _LOGGER.debug("Sign in on %s returned HTTP %s", portal.subdomain, status)
         # Only an explicit rejection means bad credentials. Throttling and
         # server errors are not something a new password would fix.
         if status in (401, 403):
+            self._record(STEP_OPOWER_DIRECT, False, "Opower rejected the username or password", host, status)
             raise InvalidAuth(f"Sign in rejected by {portal.subdomain} (HTTP {status})")
         if status == 404:
+            self._record(STEP_OPOWER_DIRECT, False, "No sign-in on this Opower site", host, status)
             raise _PortalNotFound(f"No sign in endpoint on {portal.subdomain} (HTTP 404)")
         if not 200 <= status < 300:
+            self._record(STEP_OPOWER_DIRECT, False, "Sign-in failed", host, status)
             raise CannotConnect(f"Sign in on {portal.subdomain} failed with HTTP {status}")
+        self._record(STEP_OPOWER_DIRECT, True, "Signed in", host, status)
 
         # Most Opower sites keep the login in a cookie and answer with no body.
         # Some also return a token, which then goes in an Authorization header.

@@ -27,23 +27,36 @@ The forecast sensors only show up if Washington Gas provides a forecast for your
 
 ## Before you install: check your login
 
-Washington Gas has two logins that might not be the same:
+Use the email and password you use at [my.washingtongas.com](https://my.washingtongas.com) (My Washington Gas). That's the only login most people have, and it's what the integration tries first.
 
-1. **My Washington Gas** (washingtongas.com), for paying bills
-2. **Home Energy Analysis** ([wgl.opower.com](https://wgl.opower.com)), the usage site this integration reads from
+The usage data itself lives on Washington Gas's Home Energy Analysis site at [wgl.opower.com](https://wgl.opower.com), which is run by Opower. Your My Washington Gas login usually won't work if you type it into wgl.opower.com's own sign-in page. That's expected. The integration signs in at my.washingtongas.com and then follows the site's own link into the usage pages, the same way your browser does when you click through to your usage.
 
-Go to [wgl.opower.com](https://wgl.opower.com) and try signing in. If your My Washington Gas login works there, use it. If it doesn't, create an account on that page (you'll need your account number from a bill) and use that instead.
+If you happen to have a separate account that you made on wgl.opower.com itself, that works too. The integration falls back to it when the My Washington Gas route doesn't work.
 
-You can also test it from any computer with Python before touching Home Assistant:
+### Test it before installing
+
+You can check your login from any computer with Python, or from inside your Home Assistant container, before setting anything up:
 
 ```bash
 git clone https://github.com/nkirchoff/Washington-gas-home-assisted-plug-in
 cd Washington-gas-home-assisted-plug-in
-pip install aiohttp
+pip install aiohttp   # not needed inside the Home Assistant container
 python3 scripts/check_connection.py
 ```
 
-It asks for your username and password (it doesn't save them) and prints what it finds: your accounts, the current bill, the last 10 days and your recent bills. Account numbers are partly hidden, so the output is safe to paste into a GitHub issue if something's off.
+It asks for your email and password (it doesn't save them) and goes through the sign-in one step at a time:
+
+1. **My Washington Gas sign-in**: logging in at my.washingtongas.com
+2. **Hand-off to Opower**: following the link from My Washington Gas into the usage site
+3. **Opower API**: reading your accounts from the usage site
+
+For each step it prints OK or FAILED, plus the site and HTTP status where it stopped. If something fails, it also lists each request it made (just the site, the page path and the status). It never prints passwords, cookies, tokens or the parts of addresses that can carry them, and account numbers are partly hidden, so you can paste the whole output into a GitHub issue. Add `--trace` to see the request list even when everything works.
+
+When it works, it shows your accounts, the current bill, the last 10 days and your recent bills.
+
+### Verification codes and CAPTCHAs
+
+If My Washington Gas asks for a verification code (multi-factor authentication) or shows a CAPTCHA when signing in, the integration stops there and says so. Both the check script and the Home Assistant setup screen report it. It can't enter codes for you, and it won't try to get around a CAPTCHA. If that's what you see, the integration can't sign in to your account automatically.
 
 ## Install
 
@@ -63,7 +76,7 @@ It asks for your username and password (it doesn't save them) and prints what it
 ## Set it up
 
 1. Go to **Settings > Devices & services > Add integration** and search for **Washington Gas**.
-2. Enter your username and password (see "check your login" above).
+2. Enter your My Washington Gas email and password (see "check your login" above).
 3. Pick the unit for the Energy dashboard:
    - **Therms** (default): the same numbers as your bill. Home Assistant has no therm unit, so the Energy dashboard labels them CCF. This is exactly what the built-in Opower integration does.
    - **kWh**: therms converted exactly (1 therm = 29.3071 kWh). Handy if you want to compare gas and electricity on the same scale.
@@ -87,11 +100,16 @@ Give it a few minutes, then open the Energy dashboard and switch to a past day, 
 - It checks Washington Gas every 12 hours. Their data only updates once a day and runs 1 to 2 days behind, so checking more often wouldn't give you anything newer.
 - It signs in fresh each time because the site's logins expire after a few minutes.
 - If your password changes, Home Assistant will ask you for the new one.
-- Everything stays between your Home Assistant and Washington Gas's Opower site. Nothing is sent anywhere else.
+- It signs in the way it worked the first time (through My Washington Gas, or directly on Opower) and sticks with that.
+- Your password is only sent while signing in, and only to washingtongas.com and Washington Gas's own Opower sign-in (wgl.opower.com and wglm.opower.com, used for the fallback). Everything stays between your Home Assistant, Washington Gas and its Opower site.
 
 ## Troubleshooting
 
-**"Washington Gas didn't accept that username and password"**: make sure the login works at [wgl.opower.com](https://wgl.opower.com). See "check your login" above.
+**"Washington Gas didn't accept that email and password"**: make sure they work at [my.washingtongas.com](https://my.washingtongas.com).
+
+**"Signed in to My Washington Gas, but couldn't get from there to the usage site"** or **"Couldn't sign in"**: run `scripts/check_connection.py` (see "Test it before installing" above) and open an issue with its output. It shows exactly which step stopped and where.
+
+**"My Washington Gas asked for a verification code"** or **"is showing a CAPTCHA"**: see "Verification codes and CAPTCHAs" above.
 
 **No daily sensors, only bill sensors**: your meter only reports once per bill, so daily data isn't available for your account. Bill history still goes into the Energy dashboard.
 
@@ -107,7 +125,9 @@ Then check **Settings > System > Logs**. You can also download diagnostics from 
 
 ## Status
 
-This is a new integration. The Washington Gas site doesn't publish API docs, so it's built on the same Opower API that Home Assistant's built-in Opower integration uses for other utilities with the same kind of login (Southwest Gas, Glendale Water and Power, Rhode Island Energy and others). It's covered by automated tests against a simulated Opower site, but it hasn't been run against a real Washington Gas account yet. Running `scripts/check_connection.py` first is the quickest way to confirm it works for you. If it doesn't, the output tells you where it stopped.
+This is a new integration, and **the My Washington Gas route hasn't been confirmed against the real site yet.** The Washington Gas site doesn't publish any docs for this. It also couldn't be loaded from the environment this was built in, so its sign-in pages and scripts haven't been inspected directly. Instead, the sign-in follows whatever the site does, step by step, using the same approach the [opower](https://github.com/tronikos/opower) library uses for utilities whose login goes through their own site first (AES Indiana and Puget Sound Energy in particular). That covers regular sign-in forms (including ASP.NET ones), redirects, SAML hand-off forms, ASP.NET postback links, and an Opower token embedded in the usage page.
+
+If Washington Gas does it some other way, the check script will stop at a named step and show the requests it made. That's enough to add the missing piece. Everything is covered by automated tests against a simulated My Washington Gas site and a simulated Opower site.
 
 ## Credits
 
@@ -121,4 +141,4 @@ ruff check . && ruff format --check .
 pytest
 ```
 
-Tests run the real integration code inside Home Assistant against a fake Opower site in `tests/fake_opower.py`.
+Tests run the real integration code inside Home Assistant against fake My Washington Gas and Opower sites in `tests/fake_opower.py`.

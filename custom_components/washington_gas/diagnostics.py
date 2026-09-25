@@ -17,9 +17,14 @@ TO_REDACT = {CONF_PASSWORD, CONF_USERNAME, "customer_uuid", "uuid", "utility_acc
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: WashingtonGasConfigEntry) -> dict[str, Any]:
     """Return diagnostics for a config entry, without credentials or account numbers."""
     coordinator = entry.runtime_data
+    client = coordinator.client
     return {
         "entry": async_redact_data(dict(entry.data), TO_REDACT),
-        "portal": asdict(coordinator.client.portal) if coordinator.client.portal else None,
+        "portal": asdict(client.portal) if client.portal else None,
+        "login_method": client.login_method,
+        # Steps and requests from the last login: hosts, paths and HTTP statuses only.
+        "login_report": [asdict(attempt) for attempt in client.login_report],
+        "login_trace": list(client.trace),
         "last_update_success": coordinator.last_update_success,
         "accounts": [async_redact_data(asdict(data), TO_REDACT) for data in (coordinator.data or {}).values()],
     }

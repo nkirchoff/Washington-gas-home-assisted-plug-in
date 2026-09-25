@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Connect Washington Gas",
-        "description": "Sign in with the account you use on the Washington Gas Home Energy Analysis site (wgl.opower.com). If your My Washington Gas login doesn't work here, open wgl.opower.com, choose to create an account, and use that login instead.",
+        "description": "Sign in with your My Washington Gas email and password, the same ones you use at my.washingtongas.com. If you made a separate account on the Home Energy Analysis site (wgl.opower.com), that login works too.",
         "data": {
-          "username": "Username or email",
+          "username": "Email or username",
           "password": "Password",
           "energy_unit": "Energy dashboard unit"
         },
@@ -15,15 +15,18 @@
       },
       "reauth_confirm": {
         "title": "Washington Gas password",
-        "description": "The saved password for {username} stopped working. Enter the current one.",
+        "description": "The saved password for {username} stopped working. Enter the one you use at my.washingtongas.com now.",
         "data": {
           "password": "Password"
         }
       }
     },
     "error": {
-      "invalid_auth": "Washington Gas didn't accept that username and password. Check that it's the login for wgl.opower.com.",
-      "cannot_connect": "Couldn't reach Washington Gas. Try again in a few minutes.",
+      "invalid_auth": "Washington Gas didn't accept that email and password. Check that they work at my.washingtongas.com.",
+      "mfa_required": "My Washington Gas asked for a verification code. The integration can't enter codes, so it can't sign in to this account automatically.",
+      "captcha_required": "My Washington Gas is showing a CAPTCHA on sign-in. The integration won't try to get around it, so it can't sign in right now.",
+      "handoff_failed": "Signed in to My Washington Gas, but couldn't get from there to the usage site. Run scripts/check_connection.py from the integration's GitHub page and share its output in an issue.",
+      "cannot_connect": "Couldn't sign in to Washington Gas. Try again in a few minutes. If it keeps happening, run scripts/check_connection.py from the integration's GitHub page to see which step fails.",
       "no_accounts": "That login worked, but no gas accounts are linked to it yet.",
       "unknown": "Something unexpected went wrong. Check the Home Assistant logs."
     },
@@ -42,18 +45,42 @@
   },
   "entity": {
     "sensor": {
-      "current_bill_usage": { "name": "Current bill gas usage" },
-      "current_bill_cost": { "name": "Current bill gas cost" },
-      "forecasted_bill_usage": { "name": "Forecasted bill gas usage" },
-      "forecasted_bill_cost": { "name": "Forecasted bill gas cost" },
-      "typical_bill_usage": { "name": "Typical bill gas usage" },
-      "typical_bill_cost": { "name": "Typical bill gas cost" },
-      "bill_period_start": { "name": "Bill period start" },
-      "bill_period_end": { "name": "Bill period end" },
-      "latest_day_usage": { "name": "Latest daily gas usage" },
-      "latest_day_cost": { "name": "Latest daily gas cost" },
-      "last_bill_usage": { "name": "Last bill gas usage" },
-      "last_bill_cost": { "name": "Last bill gas cost" }
+      "current_bill_usage": {
+        "name": "Current bill gas usage"
+      },
+      "current_bill_cost": {
+        "name": "Current bill gas cost"
+      },
+      "forecasted_bill_usage": {
+        "name": "Forecasted bill gas usage"
+      },
+      "forecasted_bill_cost": {
+        "name": "Forecasted bill gas cost"
+      },
+      "typical_bill_usage": {
+        "name": "Typical bill gas usage"
+      },
+      "typical_bill_cost": {
+        "name": "Typical bill gas cost"
+      },
+      "bill_period_start": {
+        "name": "Bill period start"
+      },
+      "bill_period_end": {
+        "name": "Bill period end"
+      },
+      "latest_day_usage": {
+        "name": "Latest daily gas usage"
+      },
+      "latest_day_cost": {
+        "name": "Latest daily gas cost"
+      },
+      "last_bill_usage": {
+        "name": "Last bill gas usage"
+      },
+      "last_bill_cost": {
+        "name": "Last bill gas cost"
+      }
     }
   }
 }

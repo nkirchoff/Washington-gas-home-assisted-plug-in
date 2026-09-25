@@ -19,9 +19,18 @@ from homeassistant.helpers.selector import (
 )
 import voluptuous as vol
 
-from .api import CannotConnect, InvalidAuth, NoAccounts, Portal, WashingtonGasClient
+from .api import (
+    CannotConnect,
+    CaptchaRequired,
+    InvalidAuth,
+    LoginStepError,
+    MfaRequired,
+    NoAccounts,
+    WashingtonGasClient,
+)
 from .const import (
     CONF_ENERGY_UNIT,
+    CONF_LOGIN_METHOD,
     CONF_PORTAL_SUBDOMAIN,
     CONF_PORTAL_UTILITY_CODE,
     DEFAULT_ENERGY_UNIT,
@@ -30,6 +39,7 @@ from .const import (
     ENERGY_UNIT_KWH,
 )
 from .coordinator import create_session
+from .errors import STEP_HANDOFF, STEP_OPOWER_API
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,13 +62,17 @@ STEP_USER_SCHEMA = vol.Schema(
 STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR})
 
 
-async def async_validate_login(hass: HomeAssistant, username: str, password: str) -> Portal:
-    """Log in, check there is at least one account, and return the Opower site used."""
+async def async_validate_login(hass: HomeAssistant, username: str, password: str) -> dict[str, Any]:
+    """Log in, check there is at least one account, and return what to remember about the login."""
     client = WashingtonGasClient(create_session(hass), username, password)
     await client.async_login()
     if not await client.async_get_accounts() or client.portal is None:
         raise NoAccounts
-    return client.portal
+    return {
+        CONF_PORTAL_SUBDOMAIN: client.portal.subdomain,
+        CONF_PORTAL_UTILITY_CODE: client.portal.utility_code,
+        CONF_LOGIN_METHOD: client.login_method,
+    }
 
 
 class WashingtonGasConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -66,12 +80,18 @@ class WashingtonGasConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def _async_check(self, username: str, password: str, errors: dict[str, str]) -> Portal | None:
+    async def _async_check(self, username: str, password: str, errors: dict[str, str]) -> dict[str, Any] | None:
         """Validate a login, filling errors on failure."""
         try:
             return await async_validate_login(self.hass, username, password)
         except InvalidAuth:
             errors["base"] = "invalid_auth"
+        except MfaRequired:
+            errors["base"] = "mfa_required"
+        except CaptchaRequired:
+            errors["base"] = "captcha_required"
+        except LoginStepError as err:
+            errors["base"] = "handoff_failed" if err.step in (STEP_HANDOFF, STEP_OPOWER_API) else "cannot_connect"
         except CannotConnect:
             errors["base"] = "cannot_connect"
         except NoAccounts:
@@ -88,16 +108,15 @@ class WashingtonGasConfigFlow(ConfigFlow, domain=DOMAIN):
             username = user_input[CONF_USERNAME].strip()
             await self.async_set_unique_id(username.lower())
             self._abort_if_unique_id_configured()
-            portal = await self._async_check(username, user_input[CONF_PASSWORD], errors)
-            if portal is not None:
+            login = await self._async_check(username, user_input[CONF_PASSWORD], errors)
+            if login is not None:
                 return self.async_create_entry(
                     title=f"Washington Gas ({username})",
                     data={
                         CONF_USERNAME: username,
                         CONF_PASSWORD: user_input[CONF_PASSWORD],
                         CONF_ENERGY_UNIT: user_input[CONF_ENERGY_UNIT],
-                        CONF_PORTAL_SUBDOMAIN: portal.subdomain,
-                        CONF_PORTAL_UTILITY_CODE: portal.utility_code,
+                        **login,
                     },
                 )
 
@@ -116,15 +135,11 @@ class WashingtonGasConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         entry = self._get_reauth_entry()
         if user_input is not None:
-            portal = await self._async_check(entry.data[CONF_USERNAME], user_input[CONF_PASSWORD], errors)
-            if portal is not None:
+            login = await self._async_check(entry.data[CONF_USERNAME], user_input[CONF_PASSWORD], errors)
+            if login is not None:
                 return self.async_update_reload_and_abort(
                     entry,
-                    data_updates={
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                        CONF_PORTAL_SUBDOMAIN: portal.subdomain,
-                        CONF_PORTAL_UTILITY_CODE: portal.utility_code,
-                    },
+                    data_updates={CONF_PASSWORD: user_input[CONF_PASSWORD], **login},
                 )
 
         return self.async_show_form(
