@@ -1,0 +1,86 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Washington Gas",
+        "description": "Sign in with your My Washington Gas email and password, the same ones you use at my.washingtongas.com. If you made a separate account on the Home Energy Analysis site (wgl.opower.com), that login works too.",
+        "data": {
+          "username": "Email or username",
+          "password": "Password",
+          "energy_unit": "Energy dashboard unit"
+        },
+        "data_description": {
+          "energy_unit": "Home Assistant has no therm unit. \"Therms\" keeps the same numbers as your bill (labeled CCF in the Energy dashboard). \"kWh\" converts them exactly (1 therm = 29.3071 kWh). This can't be changed later without removing and re-adding the integration."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Washington Gas password",
+        "description": "The saved password for {username} stopped working. Enter the one you use at my.washingtongas.com now.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Washington Gas didn't accept that email and password. Check that they work at my.washingtongas.com.",
+      "mfa_required": "My Washington Gas asked for a verification code. The integration can't enter codes, so it can't sign in to this account automatically.",
+      "captcha_required": "My Washington Gas is showing a CAPTCHA on sign-in. The integration won't try to get around it, so it can't sign in right now.",
+      "handoff_failed": "Signed in to My Washington Gas, but couldn't get from there to the usage site. Run scripts/check_connection.py from the integration's GitHub page and share its output in an issue.",
+      "cannot_connect": "Couldn't sign in to Washington Gas. Try again in a few minutes. If it keeps happening, run scripts/check_connection.py from the integration's GitHub page to see which step fails.",
+      "no_accounts": "That login worked, but no gas accounts are linked to it yet.",
+      "unknown": "Something unexpected went wrong. Check the Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "This Washington Gas login is already set up.",
+      "reauth_successful": "The new password works. Washington Gas is reconnected."
+    }
+  },
+  "selector": {
+    "energy_unit": {
+      "options": {
+        "ccf": "Therms (same numbers as your bill)",
+        "kwh": "kWh (converted from therms)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_bill_usage": {
+        "name": "Current bill gas usage"
+      },
+      "current_bill_cost": {
+        "name": "Current bill gas cost"
+      },
+      "forecasted_bill_usage": {
+        "name": "Forecasted bill gas usage"
+      },
+      "forecasted_bill_cost": {
+        "name": "Forecasted bill gas cost"
+      },
+      "typical_bill_usage": {
+        "name": "Typical bill gas usage"
+      },
+      "typical_bill_cost": {
+        "name": "Typical bill gas cost"
+      },
+      "bill_period_start": {
+        "name": "Bill period start"
+      },
+      "bill_period_end": {
+        "name": "Bill period end"
+      },
+      "latest_day_usage": {
+        "name": "Latest daily gas usage"
+      },
+      "latest_day_cost": {
+        "name": "Latest daily gas cost"
+      },
+      "last_bill_usage": {
+        "name": "Last bill gas usage"
+      },
+      "last_bill_cost": {
+        "name": "Last bill gas cost"
+      }
+    }
+  }
+}
